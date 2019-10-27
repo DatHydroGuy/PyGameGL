@@ -30,7 +30,7 @@ def fours(n):
     return factors + prime_factors(n)
 
 
-def r(n):
+def inscribed_radius(n):
     if n == 1:
         return 1
     s = sin(pi / n)
@@ -38,6 +38,7 @@ def r(n):
 
 
 INCREASE = pygame.USEREVENT + 1
+RECIP_TWO_PI = 1.0 / (2.0 * pi)
 
 
 class Disc:
@@ -48,58 +49,71 @@ class Disc:
         self.offset = 0
         self.id_num = widget_num
         self.radius = radius * 2
+        self.abs_radius = 0
         self.size = radius * 4
         self.factors = factors
         self.num_widgets = num_widgets
-        self.center_x = 0
-        self.center_y = 0
+        self.x = 0
+        self.y = 0
         self.colour = (255, 0, 0)
 
     def position_widget(self, center_x, center_y, inscribed_circle_radius, angle):
         if self.num_widgets == 1:
-            self.center_x = center_x
-            self.center_y = center_y
-            return
-        self.offset = inscribed_circle_radius - self.radius   # Additional radius required to touch circle edge
-        self.angle = angle + 2.0 * self.id_num * pi / self.num_widgets
-        radius = round(inscribed_circle_radius + self.offset + 0.5)
-        self.center_x = center_x + int(radius * sin(self.angle))
-        self.center_y = center_y + int(radius * cos(self.angle))
-        self.colour = self.generate_global_colour()
-
-    def generate_global_colour(self):
-        x_off = self.center_x - self.window_width / 2
-        y_off = self.center_y - self.window_height / 2
-        master_angle = atan2(y_off, x_off)
-        master_radius = sqrt(x_off * x_off + y_off * y_off)
-        hue = master_angle / (2 * pi)
-        hue = hue if 0 <= hue <= 1 else hue + 1
-        temp = hsv_to_rgb(hue, 0.5 + master_radius / self.window_height, 1)
-        return tuple([int(t * 255) for t in temp])
+            self.x = center_x
+            self.y = center_y
+        else:
+            self.offset = inscribed_circle_radius - self.radius   # Additional radius required to touch circle edge
+            self.angle = angle + 2.0 * self.id_num * pi / self.num_widgets
+            radius = round(inscribed_circle_radius + self.offset + 0.5)
+            self.x = center_x + int(radius * sin(self.angle))
+            self.y = center_y + int(radius * cos(self.angle))
+            self.colour = PygView.pixel_colours[int(self.y)][int(self.x)]
+        return self.x, self.y, self.radius, self.colour
 
 
 class PygView(object):
-    def __init__(self, width=640, height=400, fps=60):
+    pixel_colours = list()
+
+    def __init__(self, width=640, height=400, fps=60, update=1000.0):
         """Initialize pygame, window, background, font,..."""
         os.environ['SDL_VIDEO_CENTERED'] = '1'
         pygame.init()
-        pygame.display.set_caption("Press ESC to quit")
-        pygame.time.set_timer(INCREASE, 1000)
         self.width = width
         self.height = height
         self.screen = pygame.display.set_mode((self.width, self.height), pygame.DOUBLEBUF)
         self.background = pygame.Surface(self.screen.get_size()).convert()
         self.clock = pygame.time.Clock()
         self.fps = fps
-        self.radius = min(width / 4, height / 4)
+        self.radius = min(width * 0.25, height * 0.25)
+        self.circles = []
+        self.old_circles = []
+        self.generate_pixel_colours(width, height)
+        pygame.time.set_timer(INCREASE, int(1000 * update))
+
+    @classmethod
+    def generate_pixel_colours(cls, width, height):
+        cls.pixel_colours = list()
+        for y in range(height + 10):
+            cls.pixel_colours.append([])
+            for x in range(width + 10):
+                x_off = x - width * 0.5
+                y_off = y - height * 0.5
+                master_angle = atan2(y_off, x_off)
+                master_radius = sqrt(x_off * x_off + y_off * y_off)
+                hue = master_angle * RECIP_TWO_PI
+                hue = hue if 0 <= hue <= 1 else hue + 1
+                cls.pixel_colours[y].append([int(255 * t) for t in hsv_to_rgb(hue, 0.5 + master_radius / height, 1)])
 
     def run(self):
         """The main loop"""
-        value = 1
-        factors = list(reversed(fours(value)))
+        value = 1#0000
+        factors = self.draw_screen(value)
 
         running = True
         while running:
+            # if value > 10010:
+            #     running = False
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -107,18 +121,24 @@ class PygView(object):
                     if event.key == pygame.K_ESCAPE:
                         running = False
                 elif event.type == INCREASE:
+                    self.old_circles = self.circles[:]
                     value += 1
-                    factors = list(reversed(fours(value)))
+                    self.circles = []
+                    factors = self.draw_screen(value)
 
-            self.background.fill((0, 0, 0))
             self.clock.tick(self.fps)
-
-            self.draw_factors(factors, self.width / 2, self.height / 2, self.radius, 0, False)
 
             pygame.display.flip()
             self.screen.blit(self.background, (0, 0))
+            pygame.display.set_caption(f'{value} = {factors}')
 
         pygame.quit()
+
+    def draw_screen(self, value):
+        factors = list(reversed(fours(value)))
+        self.background.fill((0, 0, 0))
+        self.draw_factors(factors, self.width * 0.5, self.height * 0.5, self.radius, 0, False)
+        return factors
 
     def draw_factors(self, factors, center_x, center_y, radius, angle, adjusted):
         if not factors:
@@ -126,18 +146,18 @@ class PygView(object):
 
         n = factors[0]
         if n == 4 and adjusted is False:
-            angle -= pi / 4
+            angle -= pi * 0.25
             adjusted = True  # First time we hit a 4, adjust rotation, but no adjustments after that!
-        new_radius = radius * r(n)
+        new_radius = radius * inscribed_radius(n)
         for i in range(1, n + 1):
             disc = Disc(self.width, self.height, i, n, new_radius, factors)
-            disc.position_widget(center_x, center_y, radius, angle)
+            x, y, r, c = disc.position_widget(center_x, center_y, radius, angle)
             if len(factors) == 1:
-                pygame.draw.circle(self.background, disc.colour, (int(disc.center_x), int(disc.center_y)),
+                self.circles.append([x, y, r, c])
+                pygame.draw.circle(self.background, disc.colour, (int(disc.x), int(disc.y)),
                                    int(disc.radius))
-            self.draw_factors(factors[1:], disc.center_x, disc.center_y, new_radius, disc.angle, adjusted)
+            self.draw_factors(factors[1:], disc.x, disc.y, new_radius, disc.angle, adjusted)
 
 
 if __name__ == '__main__':
-    # call with width of window and fps
-    PygView(1000, 1000).run()
+    PygView(1000, 1000, 60, 1).run()
